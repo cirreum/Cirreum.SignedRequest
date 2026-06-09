@@ -144,4 +144,91 @@ public sealed class SignatureBaseTests {
 		ContentDigest.Verify(ContentDigest.Compute([]), []).Should().BeTrue();
 	}
 
+	// --- ① Path/query canonicalization: a path/query extracted differently on each side (client
+	//        Uri.AbsolutePath, server ToUriComponent(), or a raw relative target) still yields the
+	//        byte-identical value (RFC 9421 §2.2.6/§2.2.7 + RFC 3986 §6.2.2). ---
+
+	[Theory]
+	[InlineData("/files/a%20b", "/files/a b")]   // percent-encoded vs literal space
+	[InlineData("/a%2fb", "/a%2Fb")]             // percent-hex case
+	[InlineData("/%7euser", "/~user")]           // encoded vs decoded unreserved octet
+	[InlineData("/a/../b", "/b")]                // resolved dot-segments
+	public void FromRequest_canonicalizes_divergent_path_encodings_to_one_value(string left, string right) {
+		SignatureBaseComponents.FromRequest("GET", left, null).Path
+			.Should().Be(SignatureBaseComponents.FromRequest("GET", right, null).Path);
+	}
+
+	[Theory]
+	[InlineData("?x=%2f", "?x=%2F")]             // percent-hex case in the query
+	[InlineData("q=a%20b", "?q=a%20b")]          // leading '?' normalization preserves encoding
+	public void FromRequest_canonicalizes_divergent_query_encodings_to_one_value(string left, string right) {
+		SignatureBaseComponents.FromRequest("GET", "/x", left).Query
+			.Should().Be(SignatureBaseComponents.FromRequest("GET", "/x", right).Query);
+	}
+
+	[Fact]
+	public void FromRequest_uppercases_percent_hex_to_the_RFC_3986_canonical_form() {
+		SignatureBaseComponents.FromRequest("GET", "/a%2fb", null).Path.Should().Be("/a%2Fb");
+	}
+
+	// --- ② Parser hardening: attacker-controlled timestamps never throw, and degenerate params fail closed ---
+
+	private static readonly string SampleSignature = $"sig1=:{Convert.ToBase64String([1, 2, 3, 4])}:";
+
+	[Theory]
+	[InlineData("253402300800")]            // one second past DateTimeOffset.MaxValue
+	[InlineData("99999999999999999999")]    // overflows Int64
+	[InlineData("-62135596801")]            // one second before DateTimeOffset.MinValue
+	public void TryParse_rejects_an_out_of_range_created_without_throwing(string created) {
+		var input = $"sig1=(\"@method\");created={created};keyid=\"k\";alg=\"hmac-sha256\"";
+
+		var act = () => SignatureWireParser.TryParse(input, SampleSignature, out _);
+
+		act.Should().NotThrow();
+		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void TryParse_rejects_a_leading_plus_on_created() {
+		var input = "sig1=(\"@method\");created=+1718000000;keyid=\"k\";alg=\"hmac-sha256\"";
+
+		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void TryParse_rejects_an_empty_covered_component_list() {
+		var input = "sig1=();created=1718000000;keyid=\"k\";alg=\"hmac-sha256\"";
+
+		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void TryParse_accepts_a_well_formed_signature_at_the_timestamp_boundary() {
+		var input = "sig1=(\"@method\");created=253402300799;keyid=\"k\";alg=\"hmac-sha256\"";
+
+		SignatureWireParser.TryParse(input, SampleSignature, out var entries).Should().BeTrue();
+		entries.Should().ContainSingle().Which.Created.Should().Be(253402300799);
+	}
+
+	// --- Known-answer vector: locks the exact RFC 9421 wire signature base byte-for-byte, so the server
+	//     scheme and the client SDK (which carry their own copy of these vectors) cannot drift. ---
+
+	[Fact]
+	public void Known_answer_signature_base_is_byte_stable() {
+		var components = SignatureBaseComponents.FromRequest(
+			"POST", "/api/orders", "?page=1", [new("content-digest", "sha-256=:abc:")]);
+
+		var signed = SignatureBaseBuilder.BuildForSigning(components, Params());
+
+		var expected =
+			"\"@method\": POST\n" +
+			"\"@path\": /api/orders\n" +
+			"\"@query\": ?page=1\n" +
+			"\"content-digest\": sha-256=:abc:\n" +
+			"\"@signature-params\": (\"@method\" \"@path\" \"@query\" \"content-digest\")" +
+			";created=1718000000;keyid=\"svc-a\";alg=\"hmac-sha256\";nonce=\"nonce-xyz-0123456789\"";
+
+		System.Text.Encoding.UTF8.GetString(signed.SignatureBase).Should().Be(expected);
+	}
+
 }

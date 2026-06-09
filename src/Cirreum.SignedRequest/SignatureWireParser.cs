@@ -163,6 +163,13 @@ public static class SignatureWireParser {
 			list.Add(component);
 		}
 
+		// An empty covered-component list "()" signs nothing about the request (only @signature-params),
+		// which is meaningless for request authentication — reject it rather than let a consumer that cleared
+		// RequiredCoveredComponents accept a request-unbound signature.
+		if (list.Count == 0) {
+			return false;
+		}
+
 		covered = list;
 
 		var rest = value[(close + 1)..];
@@ -245,8 +252,22 @@ public static class SignatureWireParser {
 		return true;
 	}
 
-	private static bool TryParseInteger(string value, out long result) =>
-		long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out result);
+	// RFC 8941 sf-integer permits only a leading '-' (never '+'); and created/expires must be a Unix-seconds
+	// value the consumers can hand to DateTimeOffset.FromUnixTimeSeconds without throwing. Enforce both here,
+	// at the single integer choke point, so an out-of-range-but-valid long can never reach an unguarded
+	// FromUnixTimeSeconds downstream (which would otherwise surface as an unhandled 500 on attacker input).
+	private const long MinUnixSeconds = -62135596800; // DateTimeOffset.MinValue, whole seconds
+	private const long MaxUnixSeconds = 253402300799;  // DateTimeOffset.MaxValue, whole seconds
+
+	private static bool TryParseInteger(string value, out long result) {
+		result = 0;
+		if (value.StartsWith('+')) {
+			return false;
+		}
+
+		return long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out result)
+			&& result is >= MinUnixSeconds and <= MaxUnixSeconds;
+	}
 
 	private static int FindMatchingListClose(string value) {
 		var inString = false;
