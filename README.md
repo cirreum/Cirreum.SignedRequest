@@ -62,6 +62,20 @@ var ok = new HmacSha256SignedRequestAlgorithm().Verify(baseBytes, entry.Signatur
     && ContentDigest.Verify(contentDigestHeader, body);
 ```
 
+## RFC conformance profile
+
+> Cirreum SignedRequest implements a constrained Cirreum profile of RFC 9421 and RFC 9530. The implementation intentionally supports the covered components, algorithms, digest forms, and validation behavior documented here; unsupported general RFC features are out of scope unless explicitly listed.
+
+| Area | Supported | Not supported |
+|---|---|---|
+| Covered components | `@method`, `@path`, `@query`, HTTP fields (`content-digest`) | `@authority` (intentionally dropped), `@target-uri`, `@scheme`, `@status` (response signing), `@query-param`, component parameters (`sf` / `key` / `bs` / `req`) |
+| Algorithms | `hmac-sha256` | others are additive via `ISignedRequestAlgorithm` (e.g. Ed25519) |
+| Digest (RFC 9530) | `Content-Digest` with `sha-256` | other digest algorithms (ignored), `Repr-Digest` / `Want-*-Digest` |
+| Signatures per request | exactly one | multi-signature messages are rejected |
+| Structured fields (RFC 8941) | the dictionary / inner-list / string / byte-sequence / integer subset these headers use | a general RFC 8941 parser |
+
+`SignatureBaseComponents.FromRequest` normalizes `@path` / `@query` to the RFC 9421 §2.2.6/§2.2.7 + RFC 3986 §6.2.2 canonical form in this one shared place, so a signer and verifier on different hosts converge on the byte-identical base. Conformance is verified against RFC 4231 (HMAC-SHA-256) and RFC 9530 (Content-Digest) published test vectors, the signature base is locked by a known-answer vector, and the wire parser is fuzz-hardened against the RFC 9421 §7 never-throw contract.
+
 ## Contribution Guidelines
 
 1. **Be conservative with new abstractions**  
