@@ -91,7 +91,7 @@ var ok = new HmacSha256SignedRequestAlgorithm().Verify(baseBytes, entry.Signatur
    All primitives should be independently testable, with cross-surface conformance over awkward inputs.
 
 5. **Document architectural decisions**  
-   Context and reasoning should be clear for future maintainers (see ADR-0021).
+   Context and reasoning should be clear for future maintainers.
 
 6. **Follow .NET conventions**  
    Use established patterns from the BCL and Microsoft.Extensions.* libraries.
