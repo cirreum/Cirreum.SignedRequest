@@ -45,7 +45,12 @@ public static class SignatureBaseBuilder {
 		var builder = new StringBuilder();
 
 		foreach (var component in coveredComponents) {
-			builder.Append('"').Append(component).Append("\": ").Append(ComponentValue(component, components)).Append('\n');
+			// Serialize the component name with the SAME sf-string routine the @signature-params trailer uses, so
+			// each base line's name is byte-identical to its appearance in the verbatim params (G5). For all valid
+			// (lowercase / @-derived) names this is the plain quoted form; it closes a latent decode/re-encode
+			// asymmetry if an escaped name is ever admitted.
+			AppendSfString(builder, component);
+			builder.Append(": ").Append(ComponentValue(component, components)).Append('\n');
 		}
 
 		builder.Append("\"@signature-params\": ").Append(signatureParamsValue);

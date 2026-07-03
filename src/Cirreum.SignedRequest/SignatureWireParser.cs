@@ -61,6 +61,14 @@ public static class SignatureWireParser {
 				return false;
 			}
 
+			// keyid is the credential selector and the implicit audience (ADR-0021); an empty/whitespace value
+			// is not a meaningful credential reference. Reject it here — the single chokepoint shared by the
+			// server handler and the SDK webhook validator — so a naive store treating a blank keyid as
+			// match-anything can never be reached (C4). Mirrors the empty-covered-list rejection above.
+			if (string.IsNullOrWhiteSpace(keyId)) {
+				return false;
+			}
+
 			long? expires = null;
 			if (pmap.TryGetValue("expires", out var expiresRaw)) {
 				if (!TryParseInteger(expiresRaw, out var e)) {
@@ -150,14 +158,31 @@ public static class SignatureWireParser {
 
 		var inner = value[1..close];
 		var list = new List<string>();
+		var seen = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var item in SplitTopLevel(inner, ' ')) {
 			var trimmed = item.Trim();
 			if (trimmed.Length == 0) {
 				continue;
 			}
 
-			if (!TryParseSfString(trimmed, out var component)) {
+			if (!TryParseSfString(trimmed, out var component) || component.Length == 0) {
 				return false;
+			}
+
+			// RFC 9421 §2.3: a covered component identifier MUST NOT appear more than once (G1).
+			if (!seen.Add(component)) {
+				return false;
+			}
+
+			// RFC 9421 §2.1: HTTP field component identifiers are lowercase. Reject a non-lowercase field name
+			// (derived '@' components excepted) so the coverage check, the content-digest gate, and the
+			// field-value lookup all agree on one canonical form rather than silently disagreeing (G2).
+			if (component[0] != '@') {
+				foreach (var ch in component) {
+					if (char.IsAsciiLetterUpper(ch)) {
+						return false;
+					}
+				}
 			}
 
 			list.Add(component);

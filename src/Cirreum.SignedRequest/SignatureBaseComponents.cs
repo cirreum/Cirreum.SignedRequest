@@ -38,6 +38,14 @@ public sealed class SignatureBaseComponents {
 	/// differently on each side still yields the byte-identical signature base, defaults an empty path to
 	/// <c>/</c> and an absent query to a bare <c>?</c>, and stores fields keyed case-insensitively.
 	/// </summary>
+	/// <remarks>
+	/// <c>@path</c> is bound in RFC 3986 §5.2.4 normalized form, so dot-segments are resolved and two spellings
+	/// of the same resource (<c>/x/../admin</c> and <c>/admin</c>) collapse to one signature base. This
+	/// collision is deliberate: the signature covers exactly the path the ASP.NET pipeline routes and
+	/// authorizes on (which is itself dot-segment-normalized), so a signed request is bound to a single
+	/// canonical resource, not to a particular spelling of it. Authorization MUST therefore key on the
+	/// normalized <c>HttpRequest.Path</c>, never on a raw upstream request-target.
+	/// </remarks>
 	public static SignatureBaseComponents FromRequest(
 		string method,
 		string path,
@@ -63,12 +71,13 @@ public sealed class SignatureBaseComponents {
 		}
 
 		var withLeadingSlash = path[0] == '/' ? path : "/" + path;
-		if (Uri.TryCreate("http://_" + withLeadingSlash, UriKind.Absolute, out var uri)) {
+		var guarded = EscapeComponentDelimiters(withLeadingSlash, isPath: true);
+		if (Uri.TryCreate("http://_" + guarded, UriKind.Absolute, out var uri)) {
 			var normalized = uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
 			return CanonicalizeHex(normalized.Length == 0 ? "/" : "/" + normalized);
 		}
 
-		return CanonicalizeHex(withLeadingSlash);
+		return CanonicalizeHex(guarded);
 	}
 
 	// RFC 9421 §2.2.7: @query is the query including the leading '?'; no query yields the single char "?".
@@ -79,11 +88,23 @@ public sealed class SignatureBaseComponents {
 			return "?";
 		}
 
-		if (Uri.TryCreate("http://_/?" + trimmed, UriKind.Absolute, out var uri)) {
+		var guarded = EscapeComponentDelimiters(trimmed, isPath: false);
+		if (Uri.TryCreate("http://_/?" + guarded, UriKind.Absolute, out var uri)) {
 			return CanonicalizeHex("?" + uri.GetComponents(UriComponents.Query, UriFormat.UriEscaped));
 		}
 
-		return CanonicalizeHex("?" + trimmed);
+		return CanonicalizeHex("?" + guarded);
+	}
+
+	// A literal '?', '#', or '\' inside an ALREADY-isolated path/query component is reserved or disallowed
+	// (RFC 3986 §2.2/§3.3) and must be percent-encoded. Encode them BEFORE the System.Uri re-parse so the URI
+	// parser cannot reinterpret a raw '?'/'#' as a query/fragment delimiter (truncating @path/@query) or fold
+	// a '\' to '/'. A literal '?' is valid WITHIN a query, so it is left intact there. This keeps the shared
+	// normalizer robust for any caller; the in-box adapters (server ToUriComponent(), client uri.AbsolutePath)
+	// already deliver these components pre-isolated and pre-encoded, so this is a no-op on the normal path.
+	private static string EscapeComponentDelimiters(string value, bool isPath) {
+		var escaped = value.Replace("\\", "%5C").Replace("#", "%23");
+		return isPath ? escaped.Replace("?", "%3F") : escaped;
 	}
 
 	// RFC 3986 §6.2.2.1: percent-encoding hex digits are case-insensitive but canonically uppercase. System.Uri

@@ -44,7 +44,11 @@ public static class ContentDigest {
 		}
 
 		// Cirreum SignedRequest emits the canonical byte-sequence member; this is intentionally not a general
-		// RFC 8941 parser. base64 contains no comma, so splitting dictionary members on ',' is safe here.
+		// RFC 8941 parser. base64 contains no comma, so splitting dictionary members on ',' is safe here. We scan
+		// ALL members and require EXACTLY ONE sha-256 entry: RFC 8941 §3.2 forbids duplicate dictionary keys, so a
+		// repeated sha-256 member (which a general parser would resolve last-wins, diverging from this code's
+		// first-wins) fails closed rather than letting two implementations disagree on the authoritative digest (G4).
+		string? sha256Value = null;
 		foreach (var member in headerValue.Split(',')) {
 			var entry = member.Trim();
 			var eq = entry.IndexOf('=');
@@ -57,32 +61,39 @@ public static class ContentDigest {
 				continue;
 			}
 
-			// RFC 8941 byte sequence: ':' base64 ':', optionally followed by ;parameters (which we ignore).
-			var value = entry[(eq + 1)..].Trim();
-			if (value.Length < 2 || value[0] != ':') {
-				return false;
+			if (sha256Value is not null) {
+				return false; // a second sha-256 member — duplicate dictionary key.
 			}
 
-			var close = value.IndexOf(':', 1);
-			if (close < 0) {
-				return false;
-			}
-
-			var trailer = value[(close + 1)..].TrimStart();
-			if (trailer.Length > 0 && trailer[0] != ';') {
-				return false;
-			}
-
-			if (!TryFromBase64(value[1..close], out var expected) || expected.Length != SHA256.HashSizeInBytes) {
-				return false;
-			}
-
-			Span<byte> actual = stackalloc byte[SHA256.HashSizeInBytes];
-			SHA256.HashData(body, actual);
-			return CryptographicOperations.FixedTimeEquals(actual, expected);
+			sha256Value = entry[(eq + 1)..].Trim();
 		}
 
-		return false;
+		if (sha256Value is null) {
+			return false;
+		}
+
+		// RFC 8941 byte sequence: ':' base64 ':', optionally followed by ;parameters (which we ignore).
+		if (sha256Value.Length < 2 || sha256Value[0] != ':') {
+			return false;
+		}
+
+		var close = sha256Value.IndexOf(':', 1);
+		if (close < 0) {
+			return false;
+		}
+
+		var trailer = sha256Value[(close + 1)..].TrimStart();
+		if (trailer.Length > 0 && trailer[0] != ';') {
+			return false;
+		}
+
+		if (!TryFromBase64(sha256Value[1..close], out var expected) || expected.Length != SHA256.HashSizeInBytes) {
+			return false;
+		}
+
+		Span<byte> actual = stackalloc byte[SHA256.HashSizeInBytes];
+		SHA256.HashData(body, actual);
+		return CryptographicOperations.FixedTimeEquals(actual, expected);
 	}
 
 	private static bool TryFromBase64(string value, out byte[] bytes) {

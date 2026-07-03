@@ -171,6 +171,47 @@ public sealed class SignatureBaseTests {
 		SignatureBaseComponents.FromRequest("GET", "/a%2fb", null).Path.Should().Be("/a%2Fb");
 	}
 
+	[Fact]
+	public void FromRequest_binds_dot_segment_paths_to_the_canonical_target() {
+		// Policy (A4): @path is RFC 3986 §5.2.4 normalized, so two spellings of the same resource collapse to
+		// one canonical target. This collision is INTENTIONAL — the signature binds the resource the ASP.NET
+		// pipeline routes/authorizes on, not a particular spelling — so a traversal spelling cannot reach a
+		// DIFFERENT endpoint under a signature valid for one, and authorization keys on the normalized path.
+		var traversalSpelling = SignatureBaseComponents.FromRequest("GET", "/public/../admin", null).Path;
+		var canonicalTarget = SignatureBaseComponents.FromRequest("GET", "/admin", null).Path;
+
+		traversalSpelling.Should().Be("/admin");
+		traversalSpelling.Should().Be(canonicalTarget);
+	}
+
+	// --- Canonicalization robustness (A1/A3): a raw '?', '#', or '\' in an already-isolated component must be
+	//     percent-encoded, NOT reinterpreted by System.Uri as a query/fragment delimiter (truncating the
+	//     component) or folded ('\'→'/'). Two distinct targets must never collapse to one signature base. ---
+
+	[Theory]
+	[InlineData("/a?b=c", "/a%3Fb=c")]   // literal '?' encoded, not a query delimiter (no @path truncation)
+	[InlineData("/a#frag", "/a%23frag")] // literal '#' encoded, not a fragment delimiter
+	[InlineData("/a\\b", "/a%5Cb")]      // backslash encoded, not folded to '/'
+	public void FromRequest_does_not_let_a_raw_delimiter_truncate_or_fold_the_path(string path, string expected) {
+		SignatureBaseComponents.FromRequest("GET", path, null).Path.Should().Be(expected);
+	}
+
+	[Fact]
+	public void FromRequest_does_not_let_a_raw_hash_truncate_the_query() {
+		SignatureBaseComponents.FromRequest("GET", "/x", "a=b#c").Query.Should().Be("?a=b%23c");
+	}
+
+	[Fact]
+	public void FromRequest_keeps_distinct_delimiter_targets_distinct() {
+		// '/a?b' (a path literally containing '?') must NOT collide with '/a' (path with a 'b' query).
+		var withLiteralQuestion = SignatureBaseComponents.FromRequest("GET", "/a?b", null).Path;
+		var rootWithQuery = SignatureBaseComponents.FromRequest("GET", "/a", "b").Path;
+
+		withLiteralQuestion.Should().Be("/a%3Fb");
+		rootWithQuery.Should().Be("/a");
+		withLiteralQuestion.Should().NotBe(rootWithQuery);
+	}
+
 	// --- ② Parser hardening: attacker-controlled timestamps never throw, and degenerate params fail closed ---
 
 	private static readonly string SampleSignature = $"sig1=:{Convert.ToBase64String([1, 2, 3, 4])}:";
@@ -198,6 +239,40 @@ public sealed class SignatureBaseTests {
 	[Fact]
 	public void TryParse_rejects_an_empty_covered_component_list() {
 		var input = "sig1=();created=1718000000;keyid=\"k\";alg=\"hmac-sha256\"";
+
+		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void TryParse_rejects_duplicate_covered_components_G1() {
+		// RFC 9421 §2.3: a covered component identifier must not appear more than once.
+		var input = "sig1=(\"@method\" \"@method\");created=1718000000;keyid=\"k\";alg=\"hmac-sha256\"";
+
+		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void TryParse_rejects_a_non_lowercase_field_component_G2() {
+		// RFC 9421 §2.1: HTTP field component identifiers are lowercase; a mixed-case field name is rejected so
+		// the coverage check and the content-digest gate cannot disagree.
+		var input = "sig1=(\"@method\" \"Content-Digest\");created=1718000000;keyid=\"k\";alg=\"hmac-sha256\"";
+
+		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void ContentDigest_verify_rejects_duplicate_sha256_members_G4() {
+		var body = "hi"u8.ToArray();
+		var digest = ContentDigest.Compute(body);
+
+		ContentDigest.Verify(digest + "," + digest, body).Should().BeFalse("RFC 8941 §3.2 forbids duplicate dictionary keys");
+	}
+
+	[Fact]
+	public void TryParse_rejects_an_empty_keyid_C4() {
+		// keyid is the credential selector / implicit audience; an empty one is not a meaningful reference and
+		// must be rejected at the parser chokepoint so a naive store cannot treat it as match-anything.
+		var input = "sig1=(\"@method\");created=1718000000;keyid=\"\";alg=\"hmac-sha256\"";
 
 		SignatureWireParser.TryParse(input, SampleSignature, out _).Should().BeFalse();
 	}
