@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<Description>RFC 9421 (HTTP Message Signatures) + RFC 9530 (Content-Digest) primitives for .NET: the shared signature-base builder, structured-field wire parser, Content-Digest compute/verify, and the pluggable signing-algorithm seam (HMAC-SHA256 built in). Pure and dependency-free — the common language shared by the Cirreum.Authentication.SignedRequest server scheme and the .Client SDK so a signed request verifies byte-identically on both sides (ADR-0021 §8).</Description>
+		<Description>RFC 9421 (HTTP Message Signatures) + RFC 9530 (Content-Digest) primitives for .NET: the shared signature-base builder, structured-field wire parser, Content-Digest compute/verify, the pluggable signing-algorithm seam (HMAC-SHA256 built in), and the outbound HttpRequestMessage/HttpClient signer. Pure and dependency-free — the common language shared by the Cirreum.Authentication.SignedRequest server scheme and the .Client SDK so a signed request verifies byte-identically on both sides (ADR-0021 §8).</Description>
 		<PackageTags>cirreum;signedrequest;rfc9421;rfc9530;http-message-signatures;content-digest;hmac</PackageTags>
 	</PropertyGroup>
 

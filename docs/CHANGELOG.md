@@ -32,3 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser.
 - `ISignedRequestAlgorithm` / `ISignedRequestAlgorithmResolver` — the pluggable signing / verification seam,
   with `HmacSha256SignedRequestAlgorithm` (`hmac-sha256`) built in; additional algorithms register additively.
+- The outbound signer — `HttpRequestMessage.SignRequestAsync(...)` / `HttpClient.SendSignedAsync(...)` extensions
+  (`System.Net.Http`), `OutboundSigningOptions`, and `SigningCredentials` — the single implementation shared by
+  the `Cirreum.Authentication.SignedRequest` server scheme (outbound webhooks) and the `.Client` SDK (outbound
+  API calls), so a signed request built anywhere verifies byte-identically. Built on the shared signature-base
+  builder — the signer cannot drift from the verifier.
+- `SignedRequestHeaders` — the RFC 9421 / RFC 9530 header names (`Signature`, `Signature-Input`, `Content-Digest`)
+  in one place, referenced by the signer and the server verifier so they never diverge.
