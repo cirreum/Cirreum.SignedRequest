@@ -17,6 +17,7 @@
 - **`SignatureWireParser` / `ParsedSignature`** — defensive RFC 8941 parsing of the `Signature` / `Signature-Input` headers; every malformation returns `false` rather than throwing.
 - **`ContentDigest`** — RFC 9530 `Content-Digest` compute and constant-time verify (SHA-256), binding the request body into the signature regardless of method.
 - **`ISignedRequestAlgorithm` / `ISignedRequestAlgorithmResolver`** — the pluggable signing / verification seam, with `HmacSha256SignedRequestAlgorithm` (`hmac-sha256`) built in; new algorithms register additively.
+- **`HttpRequestMessage.SignRequestAsync(...)` / `HttpClient.SendSignedAsync(...)`** — the ready-made outbound signer (with `OutboundSigningOptions` and `SigningCredentials`, in `System.Net.Http`). This is the single signer the server scheme and the client SDK both surface, so a request signed on either side verifies byte-identically on the other.
 
 It has **no dependencies** beyond the BCL — no Cirreum, ASP.NET, or third-party packages.
 
